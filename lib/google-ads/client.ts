@@ -104,24 +104,49 @@ export async function getAccessibleCustomers(
 ): Promise<string[]> {
   if (!env) throw new Error('Server environment not available')
 
-  const client = new GoogleAdsApi({
-    client_id: env.google.clientId,
-    client_secret: env.google.clientSecret,
-    developer_token: env.google.developerToken,
-  })
-
   try {
-    // Create a temporary customer to get accessible customers
-    const customer = client.Customer({
-      customer_id: '0', // Placeholder
-      refresh_token: refreshToken,
+    // Use Google's OAuth2 to get access token from refresh token
+    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        client_id: env.google.clientId,
+        client_secret: env.google.clientSecret,
+        refresh_token: refreshToken,
+        grant_type: 'refresh_token',
+      }),
     })
 
-    const accessibleCustomers = await customer.listAccessibleCustomers()
+    if (!tokenResponse.ok) {
+      throw new Error(`Failed to refresh token: ${await tokenResponse.text()}`)
+    }
 
-    console.log('Accessible customers response:', JSON.stringify(accessibleCustomers, null, 2))
+    const { access_token } = await tokenResponse.json()
 
-    if (!accessibleCustomers.resource_names || accessibleCustomers.resource_names.length === 0) {
+    // Call Google Ads API directly to get accessible customers
+    const response = await fetch(
+      'https://googleads.googleapis.com/v16/customers:listAccessibleCustomers',
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${access_token}`,
+          'developer-token': env.google.developerToken,
+        },
+      }
+    )
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error('Google Ads API error:', errorText)
+      throw new Error(`Google Ads API error: ${response.status} - ${errorText}`)
+    }
+
+    const data = await response.json()
+    console.log('Accessible customers response:', JSON.stringify(data, null, 2))
+
+    if (!data.resourceNames || data.resourceNames.length === 0) {
       console.error('No accessible customers found. This could mean:')
       console.error('1. Developer token is in test mode (only works with MCC accounts)')
       console.error('2. No Google Ads accounts linked to this Google account')
@@ -129,15 +154,15 @@ export async function getAccessibleCustomers(
       throw new Error('No Google Ads accounts found. Please check your developer token status and ensure you have Google Ads accounts.')
     }
 
-    return accessibleCustomers.resource_names.map((name) =>
+    // Extract customer IDs from resource names (format: customers/1234567890)
+    return data.resourceNames.map((name: string) =>
       name.replace('customers/', '')
     )
   } catch (error: any) {
     console.error('Failed to get accessible customers - Full error:', error)
     console.error('Error details:', {
       message: error.message,
-      code: error.code,
-      details: error.details,
+      cause: error.cause,
       stack: error.stack
     })
     throw new Error(`Failed to fetch accessible accounts: ${error.message || 'Unknown error'}`)
