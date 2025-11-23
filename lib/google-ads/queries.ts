@@ -109,7 +109,7 @@ export async function fetchDeviceMetrics(
 
     results.forEach((row: any) => {
       const date = row.segments.date
-      const device = row.segments.device.toLowerCase()
+      const device = String(row.segments.device || 'UNKNOWN').toLowerCase()
 
       if (!deviceDataByDate[date]) {
         deviceDataByDate[date] = {
