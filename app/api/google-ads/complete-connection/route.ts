@@ -8,7 +8,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { verifyAndGetAccountInfo, formatCustomerId } from '@/lib/google-ads/manual-connect'
+import { verifyAndGetAccountInfo, formatCustomerId, fetchClientAccounts } from '@/lib/google-ads/manual-connect'
 import { decrypt, encrypt, securityHeaders, sanitizeInput } from '@/lib/security'
 import { cookies } from 'next/headers'
 
@@ -74,6 +74,22 @@ export async function POST(request: NextRequest) {
     // Format customer ID with dashes
     const formattedCustomerId = formatCustomerId(accountInfo.customerId)
 
+    // If this is a manager account, fetch client accounts
+    let clientAccounts = []
+    if (accountInfo.isManager) {
+      console.log('This is a manager account. Fetching client accounts...')
+      try {
+        clientAccounts = await fetchClientAccounts(accountInfo.customerId, refreshToken)
+        console.log(`Found ${clientAccounts.length} client accounts`)
+      } catch (error: any) {
+        console.error('Failed to fetch client accounts:', error)
+        return NextResponse.json(
+          { error: `Manager account detected but failed to fetch client accounts: ${error.message}` },
+          { status: 400, headers: securityHeaders }
+        )
+      }
+    }
+
     // Check if account already exists for this user
     const { data: existingAccount } = await supabase
       .from('ad_accounts')
@@ -91,6 +107,7 @@ export async function POST(request: NextRequest) {
           token_expires_at: new Date(Date.now() + 3600 * 1000).toISOString(), // 1 hour from now
           is_active: true,
           account_name: sanitizeInput(accountInfo.descriptiveName),
+          is_manager: accountInfo.isManager,
           updated_at: new Date().toISOString(),
         })
         .eq('id', existingAccount.id)
@@ -103,11 +120,38 @@ export async function POST(request: NextRequest) {
         )
       }
 
+      // If manager account, insert/update client accounts
+      if (accountInfo.isManager && clientAccounts.length > 0) {
+        for (const clientAccount of clientAccounts) {
+          const formattedClientId = formatCustomerId(clientAccount.customerId)
+
+          await supabase
+            .from('ad_accounts')
+            .upsert({
+              user_id: user.id,
+              platform: 'google_ads',
+              account_name: sanitizeInput(clientAccount.descriptiveName),
+              customer_id: formattedClientId,
+              refresh_token: encrypt(refreshToken),
+              token_expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+              is_active: true,
+              is_manager: false,
+              parent_account_id: existingAccount.id,
+            }, {
+              onConflict: 'user_id,customer_id',
+            })
+        }
+      }
+
       // Clear the refresh token cookie
       const response = NextResponse.json(
         {
-          message: 'Account updated successfully',
+          message: accountInfo.isManager
+            ? `Manager account updated with ${clientAccounts.length} client accounts`
+            : 'Account updated successfully',
           accountId: existingAccount.id,
+          isManager: accountInfo.isManager,
+          clientAccountsCount: clientAccounts.length,
         },
         { headers: securityHeaders }
       )
@@ -127,6 +171,7 @@ export async function POST(request: NextRequest) {
           refresh_token: encrypt(refreshToken),
           token_expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
           is_active: true,
+          is_manager: accountInfo.isManager,
         })
         .select('id')
         .single()
@@ -139,12 +184,37 @@ export async function POST(request: NextRequest) {
         )
       }
 
+      // If manager account, insert client accounts
+      if (accountInfo.isManager && clientAccounts.length > 0) {
+        for (const clientAccount of clientAccounts) {
+          const formattedClientId = formatCustomerId(clientAccount.customerId)
+
+          await supabase
+            .from('ad_accounts')
+            .insert({
+              user_id: user.id,
+              platform: 'google_ads',
+              account_name: sanitizeInput(clientAccount.descriptiveName),
+              customer_id: formattedClientId,
+              refresh_token: encrypt(refreshToken),
+              token_expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+              is_active: true,
+              is_manager: false,
+              parent_account_id: newAccount.id,
+            })
+        }
+      }
+
       // Clear the refresh token cookie
       const response = NextResponse.json(
         {
-          message: 'Account connected successfully',
+          message: accountInfo.isManager
+            ? `Manager account connected with ${clientAccounts.length} client accounts`
+            : 'Account connected successfully',
           accountId: newAccount.id,
           accountName: accountInfo.descriptiveName,
+          isManager: accountInfo.isManager,
+          clientAccountsCount: clientAccounts.length,
         },
         { headers: securityHeaders }
       )

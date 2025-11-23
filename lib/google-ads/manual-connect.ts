@@ -14,6 +14,15 @@ export interface ManualAccountInfo {
   descriptiveName: string
   currencyCode: string
   timeZone: string
+  isManager: boolean
+}
+
+export interface ClientAccountInfo {
+  customerId: string
+  descriptiveName: string
+  currencyCode: string
+  timeZone: string
+  level: number
 }
 
 /**
@@ -52,7 +61,8 @@ export async function verifyAndGetAccountInfo(
       customer.id,
       customer.descriptive_name,
       customer.currency_code,
-      customer.time_zone
+      customer.time_zone,
+      customer.manager
     FROM customer
     WHERE customer.id = ${cleanCustomerId}
   `
@@ -68,12 +78,14 @@ export async function verifyAndGetAccountInfo(
     const accountInfo = results[0].customer
 
     console.log('Account verified:', accountInfo.descriptive_name)
+    console.log('Is manager account:', accountInfo.manager)
 
     return {
       customerId: cleanCustomerId,
       descriptiveName: accountInfo.descriptive_name || `Account ${cleanCustomerId}`,
       currencyCode: accountInfo.currency_code || 'USD',
       timeZone: accountInfo.time_zone || 'America/New_York',
+      isManager: accountInfo.manager || false,
     }
   } catch (error: any) {
     console.error('Failed to verify account:', error)
@@ -88,6 +100,67 @@ export async function verifyAndGetAccountInfo(
     }
 
     throw new Error(`Failed to verify account: ${error.message || 'Unknown error'}`)
+  }
+}
+
+/**
+ * Fetch all client accounts under a manager account
+ *
+ * @param managerCustomerId - Manager account customer ID
+ * @param refreshToken - OAuth refresh token
+ * @returns List of client accounts
+ */
+export async function fetchClientAccounts(
+  managerCustomerId: string,
+  refreshToken: string
+): Promise<ClientAccountInfo[]> {
+  if (!env) throw new Error('Server environment not available')
+
+  const cleanCustomerId = managerCustomerId.replace(/[-\s]/g, '')
+
+  const client = new GoogleAdsApi({
+    client_id: env.google.clientId,
+    client_secret: env.google.clientSecret,
+    developer_token: env.google.developerToken,
+  })
+
+  const customer = client.Customer({
+    customer_id: cleanCustomerId,
+    refresh_token: refreshToken,
+    login_customer_id: cleanCustomerId, // Required for manager accounts
+  })
+
+  const query = `
+    SELECT
+      customer_client.id,
+      customer_client.descriptive_name,
+      customer_client.currency_code,
+      customer_client.time_zone,
+      customer_client.level,
+      customer_client.manager,
+      customer_client.status
+    FROM customer_client
+    WHERE customer_client.status = 'ENABLED'
+    AND customer_client.manager = false
+  `
+
+  try {
+    console.log(`Fetching client accounts for manager ${cleanCustomerId}...`)
+    const results = await customer.query(query)
+
+    const clientAccounts: ClientAccountInfo[] = results.map((row: any) => ({
+      customerId: row.customer_client.id.toString(),
+      descriptiveName: row.customer_client.descriptive_name || `Account ${row.customer_client.id}`,
+      currencyCode: row.customer_client.currency_code || 'USD',
+      timeZone: row.customer_client.time_zone || 'America/New_York',
+      level: row.customer_client.level || 1,
+    }))
+
+    console.log(`Found ${clientAccounts.length} client accounts`)
+    return clientAccounts
+  } catch (error: any) {
+    console.error('Failed to fetch client accounts:', error)
+    throw new Error(`Failed to fetch client accounts: ${error.message || 'Unknown error'}`)
   }
 }
 

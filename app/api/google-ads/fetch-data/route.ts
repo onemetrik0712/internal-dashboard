@@ -72,6 +72,17 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Manager accounts don't have campaigns - skip them
+    if (account.is_manager) {
+      return NextResponse.json(
+        {
+          error: 'Cannot fetch data for manager accounts. Please select a client account instead.',
+          isManager: true,
+        },
+        { status: 400, headers: securityHeaders }
+      )
+    }
+
     // Create Google Ads client
     let customer
     try {
