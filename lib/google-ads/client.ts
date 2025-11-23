@@ -118,12 +118,29 @@ export async function getAccessibleCustomers(
     })
 
     const accessibleCustomers = await customer.listAccessibleCustomers()
+
+    console.log('Accessible customers response:', JSON.stringify(accessibleCustomers, null, 2))
+
+    if (!accessibleCustomers.resource_names || accessibleCustomers.resource_names.length === 0) {
+      console.error('No accessible customers found. This could mean:')
+      console.error('1. Developer token is in test mode (only works with MCC accounts)')
+      console.error('2. No Google Ads accounts linked to this Google account')
+      console.error('3. Google Ads API not enabled in Google Cloud project')
+      throw new Error('No Google Ads accounts found. Please check your developer token status and ensure you have Google Ads accounts.')
+    }
+
     return accessibleCustomers.resource_names.map((name) =>
       name.replace('customers/', '')
     )
-  } catch (error) {
-    console.error('Failed to get accessible customers:', error)
-    throw new Error('Failed to fetch accessible accounts')
+  } catch (error: any) {
+    console.error('Failed to get accessible customers - Full error:', error)
+    console.error('Error details:', {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      stack: error.stack
+    })
+    throw new Error(`Failed to fetch accessible accounts: ${error.message || 'Unknown error'}`)
   }
 }
 
