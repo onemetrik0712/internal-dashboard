@@ -17,10 +17,6 @@ import {
   getUserInfo,
   OAuthTokens,
 } from '@/lib/google-ads/oauth'
-import {
-  getAccessibleCustomers,
-  getCustomerDetails,
-} from '@/lib/google-ads/client'
 import { encrypt, securityHeaders, sanitizeInput } from '@/lib/security'
 import { cookies } from 'next/headers'
 
@@ -92,122 +88,28 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    console.log('OAuth tokens obtained successfully')
+
     // Get user info from Google
     const userInfo = await getUserInfo(tokens.access_token)
+    console.log('Google user info:', userInfo.email)
 
-    // Get accessible Google Ads accounts
-    let customerIds: string[]
-    try {
-      customerIds = await getAccessibleCustomers(tokens.refresh_token)
-    } catch (error: any) {
-      console.error('Failed to get accessible customers:', error)
-      return NextResponse.redirect(
-        new URL(
-          '/dashboard?error=' +
-            encodeURIComponent(
-              'No Google Ads accounts found. Please ensure you have Google Ads accounts linked to this Google account.'
-            ),
-          request.url
-        )
-      )
-    }
-
-    if (customerIds.length === 0) {
-      return NextResponse.redirect(
-        new URL(
-          '/dashboard?error=' +
-            encodeURIComponent('No Google Ads accounts found'),
-          request.url
-        )
-      )
-    }
-
-    // Store each accessible customer as a separate account
-    const insertedAccounts: string[] = []
-
-    for (const customerId of customerIds) {
-      try {
-        // Get customer details
-        const customerDetails = await getCustomerDetails(
-          customerId,
-          tokens.refresh_token
-        )
-
-        // Format customer ID with dashes (123-456-7890)
-        const formattedCustomerId = customerId.replace(
-          /(\d{3})(\d{3})(\d{4})/,
-          '$1-$2-$3'
-        )
-
-        // Check if account already exists
-        const { data: existingAccount } = await supabase
-          .from('ad_accounts')
-          .select('id')
-          .eq('user_id', user.id)
-          .eq('customer_id', formattedCustomerId)
-          .single()
-
-        if (existingAccount) {
-          // Update existing account
-          await supabase
-            .from('ad_accounts')
-            .update({
-              refresh_token: encrypt(tokens.refresh_token),
-              token_expires_at: new Date(
-                Date.now() + tokens.expires_in * 1000
-              ).toISOString(),
-              is_active: true,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', existingAccount.id)
-
-          insertedAccounts.push(existingAccount.id)
-        } else {
-          // Insert new account
-          const { data: newAccount, error: insertError } = await supabase
-            .from('ad_accounts')
-            .insert({
-              user_id: user.id,
-              platform: 'google_ads',
-              account_name: sanitizeInput(
-                customerDetails.descriptive_name || `Account ${formattedCustomerId}`
-              ),
-              customer_id: formattedCustomerId,
-              refresh_token: encrypt(tokens.refresh_token),
-              token_expires_at: new Date(
-                Date.now() + tokens.expires_in * 1000
-              ).toISOString(),
-              is_active: true,
-            })
-            .select('id')
-            .single()
-
-          if (insertError) {
-            console.error('Failed to insert account:', insertError)
-            continue
-          }
-
-          if (newAccount) {
-            insertedAccounts.push(newAccount.id)
-          }
-        }
-      } catch (error: any) {
-        console.error(`Failed to process customer ${customerId}:`, error)
-        // Continue with other accounts
-        continue
-      }
-    }
-
-    // Clear the state cookie
+    // Store the refresh token temporarily in a cookie for the manual connection step
+    // This is more reliable than trying to auto-discover accounts
     const response = NextResponse.redirect(
-      new URL(
-        `/dashboard?success=${encodeURIComponent(
-          `Successfully connected ${insertedAccounts.length} account(s)`
-        )}`,
-        request.url
-      )
+      new URL('/dashboard/connect-account', request.url)
     )
 
+    // Store refresh token in secure cookie (expires in 10 minutes)
+    response.cookies.set('google_ads_refresh_token', encrypt(tokens.refresh_token), {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 600, // 10 minutes
+      path: '/',
+    })
+
+    // Clear the OAuth state cookie
     response.cookies.delete('oauth_state')
 
     // Add security headers
