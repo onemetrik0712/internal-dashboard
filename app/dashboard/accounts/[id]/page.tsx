@@ -1,9 +1,9 @@
 import { createClient } from '@/lib/supabase/server'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { RefreshCw, AlertTriangle } from 'lucide-react'
+import { AlertTriangle } from 'lucide-react'
 import { redirect } from 'next/navigation'
 import { formatCurrency, formatNumber } from '@/lib/utils'
+import { FetchDataButton } from '@/components/dashboard/fetch-data-button'
 
 export default async function AccountDetailPage({
   params,
@@ -70,11 +70,6 @@ export default async function AccountDetailPage({
     .gte('date', thirtyDaysAgo.toISOString().split('T')[0])
     .order('date', { ascending: false })
 
-  const handleRefresh = async () => {
-    'use server'
-    // This would trigger a data refresh - implement in next iteration
-  }
-
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between">
@@ -84,10 +79,7 @@ export default async function AccountDetailPage({
             {account.platform.replace('_', ' ').toUpperCase()} • {account.customer_id}
           </p>
         </div>
-        <Button variant="outline">
-          <RefreshCw className="mr-2 h-4 w-4" />
-          Refresh Data
-        </Button>
+        <FetchDataButton accountId={params.id} />
       </div>
 
       {/* Summary Cards */}
@@ -188,13 +180,14 @@ export default async function AccountDetailPage({
           <CardHeader>
             <CardTitle>No data available</CardTitle>
             <CardDescription>
-              Click "Refresh Data" to fetch your Google Ads performance metrics
+              Click "Fetch Data from Google Ads" to load your performance metrics
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
             <p className="text-sm text-muted-foreground">
               Once data is fetched, you'll see detailed performance charts, campaign breakdowns, and more insights here.
             </p>
+            <FetchDataButton accountId={params.id} />
           </CardContent>
         </Card>
       )}
