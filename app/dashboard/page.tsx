@@ -11,12 +11,13 @@ export default async function DashboardPage() {
 
   if (!user) return null
 
-  // Fetch user's connected accounts
+  // Fetch user's connected accounts (excluding manager accounts)
   const { data: accounts } = await supabase
     .from('ad_accounts')
     .select('*')
     .eq('user_id', user.id)
     .eq('is_active', true)
+    .eq('is_manager', false)
     .order('created_at', { ascending: false })
 
   return (
